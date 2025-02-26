@@ -1,18 +1,106 @@
-# Build and Release Folders
-bin-debug/
-bin-release/
-[Oo]bj/
-[Bb]in/
+--[[
+    WARNING: Heads up! This script has not been verified by ScriptBlox. Use at your own risk!
+]]
+local game = game
+local players = game:GetService("Players")
+local localPlayer = players.LocalPlayer
+local replicatedStorage = game:GetService("ReplicatedStorage")
+local runService = game:GetService("RunService")
 
-# Other files and folders
-.settings/
+local target = nil
+local attackRange = 40  -- Phạm vi tấn công
+local shieldRadius = 34  -- Bán kính khiên chặn sát thương AOE
 
-# Executables
-*.swf
-*.air
-*.ipa
-*.apk
+local shieldSize = Vector3.new(38, 12, 38)
+local shieldColor = Color3.fromRGB(0, 0, 255)
+local shieldEnabled = false  
 
-# Project files, i.e. `.project`, `.actionScriptProperties` and `.flexProperties`
-# should NOT be excluded as they contain compiler settings and other important
-# information for Eclipse / Flash Builder.
+-- **Tạo khiên bảo vệ**
+local function createShield()
+    local shield = Instance.new("Part")
+    shield.Size = shieldSize
+    shield.Shape = Enum.PartType.Ball
+    shield.Transparency = 0.5  
+    shield.Color = shieldColor
+    shield.Anchored = true
+    shield.CanCollide = false  
+    shield.Parent = workspace
+    return shield
+end
+
+local shield = createShield()
+
+-- **Trì hoãn kích hoạt khiên trong 1 giây sau khi Beyblade spawn**
+task.delay(1, function()
+    shieldEnabled = true
+end)
+
+-- **Hook vào FireServer để chặn tự tấn công chính mình**
+local __namecall
+__namecall = hookmetamethod(game, "__namecall", function(self, ...)
+    local Arguments = {...}
+    local Method = tostring(getnamecallmethod():lower())
+
+    if not checkcaller() and Method == "fireserver" and tostring(self) == "Attack" then
+        if Arguments[2] == workspace.Beyblades[localPlayer.Name] then
+            return nil
+        end
+    end
+    return __namecall(self, ...)
+end)
+
+runService.RenderStepped:Connect(function()
+    local beyblade = workspace.Beyblades:FindFirstChild(localPlayer.Name)
+    
+    if beyblade then
+        -- **Cập nhật vị trí khiên theo Beyblade của bạn**
+        shield.Position = beyblade.HumanoidRootPart.Position + Vector3.new(0, 6, 0)
+
+        -- **Tìm mục tiêu gần nhất trong phạm vi mới**
+        local closestDistance = attackRange
+        target = nil
+        for _, v in workspace.Training:GetChildren() do
+            if v:FindFirstChild("Root") and v:GetAttribute("Health") > 0 then
+                local dist = (beyblade.HumanoidRootPart.Position - v.Root.Position).Magnitude
+                if dist < closestDistance then
+                    closestDistance = dist
+                    target = v
+                end
+            end
+        end
+        for _, v in workspace.Beyblades:GetChildren() do
+            if v.Name ~= localPlayer.Name and v:FindFirstChild("HumanoidRootPart") then
+                local dist = (beyblade.HumanoidRootPart.Position - v.HumanoidRootPart.Position).Magnitude
+                if dist < closestDistance then
+                    closestDistance = dist
+                    target = v
+                end
+            end
+        end
+        
+        -- **Tấn công mục tiêu trong phạm vi mới**
+        if target then 
+            replicatedStorage.Events.Attack:FireServer(beyblade, target, 1, Vector3.new(0, 0, 0))
+        end
+
+        -- **Khiên đẩy nhẹ mục tiêu ra xa nhưng không làm văng mạnh**
+        if shieldEnabled then
+            for _, v in workspace.Beyblades:GetChildren() do
+                if v.Name ~= localPlayer.Name and v:FindFirstChild("HumanoidRootPart") then
+                    local dist = (beyblade.HumanoidRootPart.Position - v.HumanoidRootPart.Position).Magnitude
+                    
+                    if dist < shieldRadius then
+                        -- **Đẩy nhẹ Beyblade đối phương ra ngoài nhưng không quá xa**
+                        local bodyVelocity = Instance.new("BodyVelocity")
+                        bodyVelocity.Velocity = (v.HumanoidRootPart.Position - beyblade.HumanoidRootPart.Position).unit * 3  
+                        bodyVelocity.MaxForce = Vector3.new(5000, 5000, 5000)
+                        bodyVelocity.Parent = v.HumanoidRootPart
+
+                        -- **Xóa BodyVelocity sau 0.1s**
+                        game:GetService("Debris"):AddItem(bodyVelocity, 0.1)
+                    end
+                end
+            end
+        end
+    end
+end)
